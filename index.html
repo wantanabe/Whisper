@@ -1,0 +1,1117 @@
+<!DOCTYPE html>
+<!--
+================================================================================
+THE WHISPER OF - ARCHIVAL CRYPTOGRAPHY SPECIFICATION (VERSION 1)
+================================================================================
+This file is a self-contained, zero-dependency archival tool for encrypting and
+decrypting personal diary entries. To decrypt entries manually in the distant
+future without this webpage, follow this exact binary specification:
+
+1. INPUT PREPROCESSING:
+   - Take the Base64 input string.
+   - Strip all whitespace, newlines, and zero-width characters:
+     [\s\u200B-\u200D\uFEFF\u00AD\u2060]
+   - Normalize Base64URL to standard Base64: replace '-' with '+' and '_' with '/'.
+   - Pad the string length with '=' so that length % 4 === 0.
+   - Decode Base64 into a raw byte array (Uint8Array).
+
+2. BINARY PAYLOAD LAYOUT:
+   - Byte 0          (1 byte) : Format Version Byte. Must be 0x01.
+   - Bytes 1..16    (16 bytes): PBKDF2 random Salt.
+   - Bytes 17..28   (12 bytes): AES-GCM Initialization Vector (IV / Nonce).
+   - Bytes 29..end  (Variable): AES-GCM Ciphertext + 128-bit (16-byte) Auth Tag
+                                appended at the end of the ciphertext.
+   - Minimum valid byte length: 1 + 16 + 12 + 16 = 45 bytes.
+
+3. KEY DERIVATION (PBKDF2):
+   - Password: 8-digit ASCII string encoded as UTF-8 bytes (8 bytes).
+   - Algorithm: PBKDF2-HMAC-SHA256
+   - Salt: Bytes 1..16 extracted from payload.
+   - Iterations: 600,000
+   - Output Key: 256-bit (32-byte) key for AES-GCM.
+
+4. ENCRYPTION / DECRYPTION (AES-GCM):
+   - Algorithm: AES-256-GCM
+   - IV: Bytes 17..28 (12 bytes).
+   - Tag Length: 128 bits (16 bytes).
+   - Additional Authenticated Data (AAD): None.
+   - Plaintext Encoding: UTF-8 (via TextEncoder / TextDecoder).
+
+5. EXAMPLE PYTHON 3 RECOVERY SCRIPT:
+   import base64, hashlib
+   from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+   def decrypt_entry(b64_str: str, pin_8_digits: str) -> str:
+       clean = "".join(c for c in b64_str if c not in " \t\r\n\u200b\u200c\u200d\ufeff")
+       clean = clean.replace("-", "+").replace("_", "/")
+       clean += "=" * ((4 - len(clean) % 4) % 4)
+       raw = base64.b64decode(clean)
+       assert raw[0] == 0x01, "Unknown version"
+       salt, iv, ct = raw[1:17], raw[17:29], raw[29:]
+       key = hashlib.pbkdf2_hmac("sha256", pin_8_digits.encode("utf-8"), salt, 600000, 32)
+       return AESGCM(key).decrypt(iv, ct, None).decode("utf-8")
+================================================================================
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The whisper of</title>
+  <style>
+    /* =========================================================================
+       1. BASE RESET & "OLD PAPER" VISUAL DESIGN
+       Strictly border-radius: 0 on every element.
+       ========================================================================= */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      border-radius: 0 !important;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      min-height: 100%;
+      background-color: #1c1814;
+      color: #2c251e;
+      font-family: Georgia, "Palatino Linotype", Palatino, Garamond, serif;
+      font-size: 17px;
+      line-height: 32px;
+      -webkit-text-size-adjust: 100%;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 32px 12px 64px 12px;
+    }
+
+    /* Outer wrapper holds the drop-shadow so clip-path on the inner sheet casts a real shadow */
+    .paper-shadow-wrapper {
+      width: 100%;
+      max-width: 720px;
+      filter: drop-shadow(0 16px 28px rgba(0, 0, 0, 0.78))
+              drop-shadow(0 3px 8px rgba(0, 0, 0, 0.55));
+    }
+
+    /* Worn parchment sheet with natural chipped edges via polygon clip-path */
+    .paper-sheet {
+      position: relative;
+      width: 100%;
+      background-color: #f4ecd8;
+      background-image:
+        radial-gradient(ellipse at 50% 35%, rgba(255, 250, 236, 0.35) 0%, rgba(214, 192, 152, 0.28) 68%, rgba(168, 138, 94, 0.42) 100%),
+        linear-gradient(90deg, rgba(160, 130, 88, 0.16) 0%, rgba(0, 0, 0, 0) 5%, rgba(0, 0, 0, 0) 95%, rgba(160, 130, 88, 0.16) 100%);
+      padding: 48px 56px 64px 56px;
+      clip-path: polygon(
+        0.5% 0.2%, 4.2% 0.0%, 11.8% 0.3%, 12.4% 0.8%, 13.0% 0.2%,
+        27.5% 0.0%, 44.0% 0.2%, 61.2% 0.0%, 76.5% 0.3%, 77.1% 0.7%,
+        77.8% 0.2%, 91.5% 0.0%, 98.2% 0.2%, 99.6% 0.5%, 100.0% 1.6%,
+        99.7% 9.4%, 100.0% 21.8%, 99.5% 22.4%, 99.9% 23.1%, 99.8% 41.0%,
+        100.0% 58.5%, 99.6% 73.2%, 99.2% 73.9%, 99.8% 74.6%, 100.0% 89.2%,
+        99.6% 98.5%, 99.2% 99.7%, 96.4% 100.0%, 84.0% 99.7%, 69.5% 100.0%,
+        53.2% 99.8%, 52.6% 99.3%, 51.9% 99.9%, 35.8% 100.0%, 19.4% 99.7%,
+        6.2% 100.0%, 1.1% 99.8%, 0.2% 99.1%, 0.0% 94.5%, 0.3% 81.2%,
+        0.0% 64.8%, 0.5% 64.1%, 0.1% 63.4%, 0.2% 46.5%, 0.0% 29.0%,
+        0.3% 14.2%, 0.0% 3.5%
+      );
+      transition: background-color 0.25s ease;
+    }
+
+    /* =========================================================================
+       2. TOP BAR, MODE INDICATOR, TITLE & PIN BOXES
+       ========================================================================= */
+    /* Subtle encrypt mode indicator: three faint ink dots at the top-left corner */
+    .encrypt-dots {
+      position: absolute;
+      top: 22px;
+      left: 26px;
+      display: flex;
+      gap: 5px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+    }
+
+    .paper-sheet.mode-encrypt .encrypt-dots {
+      opacity: 0.48;
+    }
+
+    .encrypt-dots span {
+      display: block;
+      width: 4px;
+      height: 4px;
+      background-color: #2c251e;
+    }
+
+    /* Reset button at the top-right corner */
+    .reset-btn {
+      position: absolute;
+      top: 16px;
+      right: 20px;
+      width: 32px;
+      height: 32px;
+      background: transparent;
+      border: 1px solid transparent;
+      color: #6e5e4a;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .reset-btn:hover,
+    .reset-btn:focus-visible {
+      color: #2c251e;
+      border-color: #b8a686;
+      outline: none;
+    }
+
+    .reset-btn svg {
+      width: 17px;
+      height: 17px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: square;
+      stroke-linejoin: miter;
+    }
+
+    /* Header & Title */
+    .diary-header {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+
+    .diary-title {
+      font-size: 26px;
+      font-weight: normal;
+      font-style: italic;
+      letter-spacing: 0.04em;
+      line-height: 32px;
+      color: #2c251e;
+      margin-bottom: 16px;
+      user-select: none;
+    }
+
+    /* 8 PIN Boxes */
+    .pin-row {
+      display: flex;
+      justify-content: center;
+      gap: 6px;
+      margin: 0 auto;
+    }
+
+    .pin-box {
+      width: 34px;
+      height: 38px;
+      border: 1px solid #8c7a62;
+      background-color: rgba(255, 252, 244, 0.35);
+      color: #2c251e;
+      font-family: Georgia, "Palatino Linotype", Palatino, Garamond, serif;
+      font-size: 18px;
+      line-height: 36px;
+      text-align: center;
+      outline: none;
+      caret-color: #2c251e;
+      -webkit-appearance: none;
+      appearance: none;
+      transition: border-color 0.15s ease, background-color 0.15s ease;
+    }
+
+    .pin-box:focus {
+      border-color: #2c251e;
+      background-color: rgba(255, 252, 244, 0.72);
+    }
+
+    /* =========================================================================
+       3. RULED PAPER AREA (TEXTAREA & RESULT ALIGNED TO 32PX LINES)
+       ========================================================================= */
+    .diary-content-wrap {
+      max-width: 65ch;
+      margin: 0 auto;
+    }
+
+    /* Repeating 32px ruled gradient: 31px transparent + 1px line at bottom */
+    .ruled-surface {
+      width: 100%;
+      background-image: repeating-linear-gradient(
+        to bottom,
+        transparent 0px,
+        transparent 31px,
+        #d8c8a8 31px,
+        #d8c8a8 32px
+      );
+      background-size: 100% 32px;
+      background-position: 0 0;
+      background-attachment: local;
+    }
+
+    .diary-textarea {
+      display: block;
+      width: 100%;
+      min-height: 160px; /* 5 ruled lines minimum */
+      border: none;
+      outline: none;
+      resize: none;
+      overflow-y: hidden;
+      background: transparent;
+      color: #2c251e;
+      font-family: Georgia, "Palatino Linotype", Palatino, Garamond, serif;
+      font-size: 17px;
+      line-height: 32px;
+      padding: 0;
+      margin: 0;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+
+    .diary-textarea::placeholder {
+      color: #96856d;
+      font-style: italic;
+      opacity: 1;
+    }
+
+    /* Controls & Status bar between input and output */
+    .action-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 32px;
+      margin-top: 16px;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .status-text {
+      font-size: 16px;
+      line-height: 32px;
+      font-style: italic;
+      color: #6e5e4a;
+      min-height: 32px;
+    }
+
+    .control-buttons {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-left: auto;
+    }
+
+    .paper-btn {
+      background-color: transparent;
+      border: 1px solid #6e5e4a;
+      color: #2c251e;
+      font-family: Georgia, "Palatino Linotype", Palatino, Garamond, serif;
+      font-size: 16px;
+      line-height: 28px;
+      padding: 1px 14px;
+      cursor: pointer;
+      letter-spacing: 0.03em;
+      transition: background-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+    }
+
+    .paper-btn:hover:not(:disabled),
+    .paper-btn:focus-visible:not(:disabled) {
+      background-color: #2c251e;
+      color: #f4ecd8;
+      outline: none;
+    }
+
+    .paper-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    /* Output section */
+    .output-section {
+      margin-top: 16px;
+      display: none;
+    }
+
+    .output-section.visible {
+      display: block;
+    }
+
+    .result-text {
+      width: 100%;
+      min-height: 32px;
+      color: #2c251e;
+      font-family: Georgia, "Palatino Linotype", Palatino, Garamond, serif;
+      font-size: 17px;
+      line-height: 32px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+
+    .result-text.ciphertext-output {
+      word-break: break-all;
+    }
+
+    /* Handwritten-style gentle message for wrong key or unknown version */
+    .handwritten-msg {
+      font-family: "Palatino Linotype", Palatino, Georgia, Garamond, serif;
+      font-style: italic;
+      font-size: 18px;
+      line-height: 32px;
+      color: #5c4b37;
+      letter-spacing: 0.02em;
+    }
+
+    .output-actions {
+      margin-top: 16px;
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    /* =========================================================================
+       4. RESPONSIVE SIZING (FITS 360PX SCREEN COMFORTABLY)
+       ========================================================================= */
+    @media (max-width: 520px) {
+      body {
+        padding: 16px 6px 40px 6px;
+      }
+
+      .paper-sheet {
+        padding: 40px 18px 48px 18px;
+      }
+
+      .diary-title {
+        font-size: 23px;
+      }
+
+      /* 8 boxes * 33px + 7 gaps * 4px = 292px <= 312px inner width on 360px screen */
+      .pin-row {
+        gap: 4px;
+      }
+
+      .pin-box {
+        width: 33px;
+        height: 36px;
+        font-size: 16px;
+        line-height: 34px;
+      }
+
+      .diary-textarea,
+      .result-text {
+        font-size: 16px;
+        line-height: 32px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="paper-shadow-wrapper">
+    <main class="paper-sheet" id="paperSheet">
+      <!-- Subtle Encrypt Mode Indicator (3 tiny dots at top-left corner) -->
+      <div class="encrypt-dots" id="encryptDots" aria-hidden="true" title="Encrypt mode">
+        <span></span><span></span><span></span>
+      </div>
+
+      <!-- Top-Right Reset Button -->
+      <button type="button" class="reset-btn" id="resetBtn" aria-label="Reset" title="Reset">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+          <path d="M3 3v5h5" />
+        </svg>
+      </button>
+
+      <!-- Title & 8 PIN Inputs -->
+      <header class="diary-header">
+        <h1 class="diary-title" id="diaryTitle">The whisper of</h1>
+        <div class="pin-row" id="pinRow" role="group" aria-label="8-digit key">
+          <input type="text" class="pin-box" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 1">
+          <input type="text" class="pin-box" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 2">
+          <input type="text" class="pin-box" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 3">
+          <input type="text" class="pin-box" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 4">
+          <input type="text" class="pin-box" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 5">
+          <input type="text" class="pin-box" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 6">
+          <input type="text" class="pin-box" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 7">
+          <input type="text" class="pin-box" inputmode="numeric" pattern="[0-9]*" maxlength="1" autocomplete="off" aria-label="Digit 8">
+        </div>
+      </header>
+
+      <!-- Main Ruled Content Area -->
+      <div class="diary-content-wrap">
+        <div class="ruled-surface">
+          <textarea
+            id="diaryTextarea"
+            class="diary-textarea"
+            rows="5"
+            placeholder="Paste the encrypted text here..."
+            spellcheck="false"
+          ></textarea>
+        </div>
+
+        <!-- Status & Mode Action Bar -->
+        <div class="action-bar">
+          <div class="status-text" id="statusText" aria-live="polite"></div>
+          <div class="control-buttons">
+            <button type="button" class="paper-btn hidden" id="encryptBtn">ENCRYPT</button>
+          </div>
+        </div>
+
+        <!-- Result & Copy Section -->
+        <section class="output-section" id="outputSection" aria-live="polite">
+          <div class="ruled-surface">
+            <div class="result-text" id="resultText"></div>
+          </div>
+          <div class="output-actions" id="outputActions">
+            <button type="button" class="paper-btn hidden" id="copyBtn">Copy</button>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      /* =======================================================================
+         1. CONSTANTS & DOM ELEMENTS
+         ======================================================================= */
+      const SECRET_TOGGLE_PIN = "22022007";
+      const FORMAT_VERSION = 0x01;
+      const PBKDF2_ITERATIONS = 600000;
+      const SALT_LENGTH = 16;
+      const IV_LENGTH = 12;
+      const MIN_PAYLOAD_BYTES = 1 + SALT_LENGTH + IV_LENGTH + 16; // 45 bytes
+
+      const paperSheet = document.getElementById("paperSheet");
+      const diaryTitle = document.getElementById("diaryTitle");
+      const resetBtn = document.getElementById("resetBtn");
+      const pinBoxes = Array.from(document.querySelectorAll(".pin-box"));
+      const diaryTextarea = document.getElementById("diaryTextarea");
+      const statusText = document.getElementById("statusText");
+      const encryptBtn = document.getElementById("encryptBtn");
+      const outputSection = document.getElementById("outputSection");
+      const resultText = document.getElementById("resultText");
+      const copyBtn = document.getElementById("copyBtn");
+
+      let currentMode = "decrypt"; // "decrypt" | "encrypt"
+      let isWorking = false;
+
+      // Typewriter state
+      let typewriterTimer = null;
+      let typewriterFullText = "";
+      let typewriterChars = [];
+      let typewriterIndex = 0;
+
+      // Copy button reset timer
+      let copyResetTimer = null;
+
+      /* =======================================================================
+         2. SECURE CONTEXT CHECK
+         ======================================================================= */
+      function checkCryptoAvailable() {
+        if (!window.crypto || !window.crypto.subtle) {
+          showMessage("Please open this page over HTTPS or localhost.", true);
+          return false;
+        }
+        return true;
+      }
+
+      /* =======================================================================
+         3. TEXTAREA AUTO-GROW (NO INNER SCROLLBAR, SNAPS TO 32PX LINES)
+         ======================================================================= */
+      function adjustTextareaHeight() {
+        diaryTextarea.style.height = "auto";
+        const minHeight = 160; // 5 * 32px
+        const scrollH = diaryTextarea.scrollHeight;
+        const snapped = Math.max(minHeight, Math.ceil(scrollH / 32) * 32);
+        diaryTextarea.style.height = snapped + "px";
+      }
+
+      diaryTextarea.addEventListener("input", function () {
+        // Strip accidental line breaks so Enter never inserts newlines
+        if (/[\r\n]/.test(diaryTextarea.value)) {
+          const start = diaryTextarea.selectionStart;
+          diaryTextarea.value = diaryTextarea.value.replace(/[\r\n]+/g, " ");
+          diaryTextarea.setSelectionRange(start, start);
+        }
+        adjustTextareaHeight();
+      });
+
+      window.addEventListener("resize", adjustTextareaHeight);
+
+      /* =======================================================================
+         4. MODE SWITCHING & RESET LOGIC
+         ======================================================================= */
+      function applyModeUI() {
+        if (currentMode === "encrypt") {
+          paperSheet.classList.add("mode-encrypt");
+          diaryTitle.textContent = "The whisper of ·";
+          diaryTextarea.placeholder = "Write your entry here...";
+          encryptBtn.classList.remove("hidden");
+        } else {
+          paperSheet.classList.remove("mode-encrypt");
+          diaryTitle.textContent = "The whisper of";
+          diaryTextarea.placeholder = "Paste the encrypted text here...";
+          encryptBtn.classList.add("hidden");
+        }
+      }
+
+      function clearPinBoxes(focusFirst) {
+        pinBoxes.forEach(function (box) {
+          box.value = "";
+        });
+        if (focusFirst) {
+          pinBoxes[0].focus();
+        }
+      }
+
+      function clearOutput() {
+        stopTypewriter(false);
+        statusText.textContent = "";
+        resultText.textContent = "";
+        resultText.className = "result-text";
+        outputSection.classList.remove("visible");
+        copyBtn.classList.add("hidden");
+        if (copyResetTimer) {
+          clearTimeout(copyResetTimer);
+          copyResetTimer = null;
+        }
+      }
+
+      function toggleModeSecretly() {
+        stopTypewriter(false);
+        clearOutput();
+        currentMode = currentMode === "decrypt" ? "encrypt" : "decrypt";
+        applyModeUI();
+        clearPinBoxes(true);
+      }
+
+      function resetAll() {
+        stopTypewriter(false);
+        isWorking = false;
+        setWorkingState(false);
+        currentMode = "decrypt";
+        applyModeUI();
+        clearPinBoxes(false);
+        diaryTextarea.value = "";
+        adjustTextareaHeight();
+        clearOutput();
+      }
+
+      resetBtn.addEventListener("click", resetAll);
+
+      /* =======================================================================
+         5. 8-DIGIT PIN INPUT LOGIC
+         ======================================================================= */
+      function getPinString() {
+        return pinBoxes.map(function (b) { return b.value; }).join("");
+      }
+
+      function handlePinCompletion() {
+        const pin = getPinString();
+        if (pin.length !== 8 || !/^\d{8}$/.test(pin)) {
+          return;
+        }
+
+        // Check if user entered the secret mode-switching sequence 22022007
+        if (pin === SECRET_TOGGLE_PIN) {
+          toggleModeSecretly();
+          return;
+        }
+
+        // Otherwise, auto-run if textarea is not empty
+        if (diaryTextarea.value.trim().length > 0) {
+          triggerCurrentAction();
+        }
+      }
+
+      pinBoxes.forEach(function (box, idx) {
+        // Keydown handles navigation, Backspace, Delete, and Enter
+        box.addEventListener("keydown", function (e) {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            triggerCurrentAction();
+            return;
+          }
+
+          if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            if (idx > 0) {
+              pinBoxes[idx - 1].focus();
+              pinBoxes[idx - 1].select();
+            }
+            return;
+          }
+
+          if (e.key === "ArrowRight") {
+            e.preventDefault();
+            if (idx < pinBoxes.length - 1) {
+              pinBoxes[idx + 1].focus();
+              pinBoxes[idx + 1].select();
+            }
+            return;
+          }
+
+          if (e.key === "Backspace") {
+            e.preventDefault();
+            if (box.value !== "") {
+              box.value = "";
+            } else if (idx > 0) {
+              pinBoxes[idx - 1].value = "";
+              pinBoxes[idx - 1].focus();
+            }
+            return;
+          }
+
+          if (e.key === "Delete") {
+            e.preventDefault();
+            box.value = "";
+            if (idx < pinBoxes.length - 1) {
+              pinBoxes[idx + 1].focus();
+              pinBoxes[idx + 1].select();
+            }
+            return;
+          }
+
+          // Allow modifier shortcuts (Ctrl+V, Cmd+V, Tab, etc.)
+          if (e.ctrlKey || e.metaKey || e.altKey || e.key === "Tab") {
+            return;
+          }
+
+          // Direct single-digit replacement even if box already has a digit
+          if (/^\d$/.test(e.key)) {
+            e.preventDefault();
+            box.value = e.key;
+            if (idx < pinBoxes.length - 1) {
+              pinBoxes[idx + 1].focus();
+              pinBoxes[idx + 1].select();
+            }
+            handlePinCompletion();
+            return;
+          }
+
+          // Block any non-digit printable character
+          if (e.key.length === 1) {
+            e.preventDefault();
+          }
+        });
+
+        // Fallback input handler for mobile virtual keyboards / IME
+        box.addEventListener("input", function () {
+          const digits = box.value.replace(/\D/g, "");
+          if (!digits) {
+            box.value = "";
+            return;
+          }
+          if (digits.length === 1) {
+            box.value = digits;
+            if (idx < pinBoxes.length - 1) {
+              pinBoxes[idx + 1].focus();
+            }
+            handlePinCompletion();
+          } else {
+            // Multiple digits entered at once via mobile autocomplete/paste
+            distributeDigitsFrom(idx, digits);
+          }
+        });
+
+        // Select existing digit on focus for smooth overwriting
+        box.addEventListener("focus", function () {
+          setTimeout(function () {
+            box.select();
+          }, 0);
+        });
+
+        // Paste support across all 8 boxes (ignores non-digit characters)
+        box.addEventListener("paste", function (e) {
+          e.preventDefault();
+          const pasted = (e.clipboardData || window.clipboardData).getData("text") || "";
+          const digits = pasted.replace(/\D/g, "");
+          if (!digits) return;
+          // If pasting 8 or more digits, fill from the very first box
+          const startIdx = digits.length >= 8 ? 0 : idx;
+          distributeDigitsFrom(startIdx, digits);
+        });
+      });
+
+      function distributeDigitsFrom(startIndex, digitsStr) {
+        let lastFilled = startIndex;
+        for (let i = 0; i < digitsStr.length && (startIndex + i) < pinBoxes.length; i++) {
+          pinBoxes[startIndex + i].value = digitsStr[i];
+          lastFilled = startIndex + i;
+        }
+        const nextFocus = Math.min(lastFilled + 1, pinBoxes.length - 1);
+        pinBoxes[nextFocus].focus();
+        handlePinCompletion();
+      }
+
+      /* =======================================================================
+         6. ENTER KEY IN TEXTAREA & BUTTON TRIGGERS
+         ======================================================================= */
+      diaryTextarea.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault(); // Never insert newlines; Enter triggers action
+          triggerCurrentAction();
+        }
+      });
+
+      encryptBtn.addEventListener("click", function () {
+        triggerCurrentAction();
+      });
+
+      function triggerCurrentAction() {
+        if (isWorking) return;
+
+        const pin = getPinString();
+        if (pin === SECRET_TOGGLE_PIN) {
+          toggleModeSecretly();
+          return;
+        }
+
+        const text = diaryTextarea.value.trim();
+        if (!text) {
+          return; // If textarea is empty, do nothing
+        }
+
+        if (pin.length !== 8 || !/^\d{8}$/.test(pin)) {
+          // Focus first empty PIN box if PIN is incomplete
+          const emptyBox = pinBoxes.find(function (b) { return !b.value; }) || pinBoxes[0];
+          emptyBox.focus();
+          return;
+        }
+
+        if (!checkCryptoAvailable()) {
+          return;
+        }
+
+        if (currentMode === "encrypt") {
+          runEncryption(diaryTextarea.value, pin);
+        } else {
+          runDecryption(text, pin);
+        }
+      }
+
+      function setWorkingState(working) {
+        isWorking = working;
+        encryptBtn.disabled = working;
+        copyBtn.disabled = working;
+        statusText.textContent = working ? "Working..." : "";
+      }
+
+      /* =======================================================================
+         7. WEB CRYPTOGRAPHY (PBKDF2 + AES-256-GCM)
+         ======================================================================= */
+      async function deriveAesGcmKey(pinString, saltBytes, keyUsages) {
+        const encoder = new TextEncoder();
+        const passwordBytes = encoder.encode(pinString);
+
+        const baseKey = await window.crypto.subtle.importKey(
+          "raw",
+          passwordBytes,
+          { name: "PBKDF2" },
+          false,
+          ["deriveKey"]
+        );
+
+        return window.crypto.subtle.deriveKey(
+          {
+            name: "PBKDF2",
+            salt: saltBytes,
+            iterations: PBKDF2_ITERATIONS,
+            hash: "SHA-256"
+          },
+          baseKey,
+          {
+            name: "AES-GCM",
+            length: 256
+          },
+          false,
+          keyUsages
+        );
+      }
+
+      function uint8ArrayToBase64(bytes) {
+        let binary = "";
+        const chunkSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+          const sub = bytes.subarray(i, i + chunkSize);
+          binary += String.fromCharCode.apply(null, sub);
+        }
+        return window.btoa(binary);
+      }
+
+      function cleanAndDecodeBase64(rawString) {
+        // Strip all whitespace, newlines, and zero-width characters Facebook may insert
+        let cleaned = rawString.replace(/[\s\u200B-\u200D\uFEFF\u00AD\u2060]+/g, "");
+        // Accept Base64URL by converting '-' to '+' and '_' to '/'
+        cleaned = cleaned.replace(/-/g, "+").replace(/_/g, "/");
+        // Strip any existing '=' padding and restore proper padding
+        cleaned = cleaned.replace(/=+$/, "");
+        if (cleaned.length === 0 || cleaned.length % 4 === 1) {
+          throw new Error("Invalid Base64 length");
+        }
+        const padNeeded = (4 - (cleaned.length % 4)) % 4;
+        cleaned += "=".repeat(padNeeded);
+
+        const binary = window.atob(cleaned);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
+      }
+
+      async function runEncryption(plaintext, pin) {
+        stopTypewriter(false);
+        clearOutput();
+        setWorkingState(true);
+
+        try {
+          const salt = window.crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
+          const iv = window.crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+          const key = await deriveAesGcmKey(pin, salt, ["encrypt"]);
+
+          const encoder = new TextEncoder();
+          const encodedPlaintext = encoder.encode(plaintext);
+
+          const cipherBuffer = await window.crypto.subtle.encrypt(
+            {
+              name: "AES-GCM",
+              iv: iv,
+              tagLength: 128
+            },
+            key,
+            encodedPlaintext
+          );
+
+          const cipherBytes = new Uint8Array(cipherBuffer);
+          const packed = new Uint8Array(1 + SALT_LENGTH + IV_LENGTH + cipherBytes.length);
+          packed[0] = FORMAT_VERSION;
+          packed.set(salt, 1);
+          packed.set(iv, 1 + SALT_LENGTH);
+          packed.set(cipherBytes, 1 + SALT_LENGTH + IV_LENGTH);
+
+          const base64Cipher = uint8ArrayToBase64(packed);
+
+          setWorkingState(false);
+          showCiphertextOutput(base64Cipher);
+        } catch (err) {
+          setWorkingState(false);
+          showMessage("These numbers recall nothing...", true);
+        }
+      }
+
+      async function runDecryption(cipherInput, pin) {
+        stopTypewriter(false);
+        clearOutput();
+        setWorkingState(true);
+
+        let payloadBytes;
+        try {
+          payloadBytes = cleanAndDecodeBase64(cipherInput);
+        } catch (e) {
+          setWorkingState(false);
+          showMessage("These numbers recall nothing...", true);
+          return;
+        }
+
+        if (payloadBytes.length < MIN_PAYLOAD_BYTES) {
+          setWorkingState(false);
+          showMessage("These numbers recall nothing...", true);
+          return;
+        }
+
+        const version = payloadBytes[0];
+        if (version !== FORMAT_VERSION) {
+          setWorkingState(false);
+          showMessage("This text comes from a version I don't know.", true);
+          return;
+        }
+
+        try {
+          const salt = payloadBytes.subarray(1, 1 + SALT_LENGTH);
+          const iv = payloadBytes.subarray(1 + SALT_LENGTH, 1 + SALT_LENGTH + IV_LENGTH);
+          const ciphertext = payloadBytes.subarray(1 + SALT_LENGTH + IV_LENGTH);
+
+          const key = await deriveAesGcmKey(pin, salt, ["decrypt"]);
+          const decryptedBuffer = await window.crypto.subtle.decrypt(
+            {
+              name: "AES-GCM",
+              iv: iv,
+              tagLength: 128
+            },
+            key,
+            ciphertext
+          );
+
+          const decoder = new TextDecoder("utf-8", { fatal: true });
+          const plaintext = decoder.decode(decryptedBuffer);
+
+          setWorkingState(false);
+          showDecryptedOutputWithTypewriter(plaintext);
+        } catch (err) {
+          setWorkingState(false);
+          showMessage("These numbers recall nothing...", true);
+        }
+      }
+
+      /* =======================================================================
+         8. OUTPUT DISPLAY & TYPEWRITER EFFECT
+         ======================================================================= */
+      function showMessage(msg, isHandwritten) {
+        stopTypewriter(false);
+        outputSection.classList.add("visible");
+        resultText.className = isHandwritten ? "result-text handwritten-msg" : "result-text";
+        resultText.textContent = msg;
+        copyBtn.classList.add("hidden");
+      }
+
+      function showCiphertextOutput(cipherStr) {
+        stopTypewriter(false);
+        outputSection.classList.add("visible");
+        resultText.className = "result-text ciphertext-output";
+        resultText.textContent = cipherStr;
+        copyBtn.textContent = "Copy code";
+        copyBtn.dataset.defaultLabel = "Copy code";
+        copyBtn.dataset.copyValue = cipherStr;
+        copyBtn.classList.remove("hidden");
+      }
+
+      function showDecryptedOutputWithTypewriter(plaintext) {
+        stopTypewriter(false);
+        outputSection.classList.add("visible");
+        resultText.className = "result-text";
+        resultText.textContent = "";
+
+        copyBtn.textContent = "Copy";
+        copyBtn.dataset.defaultLabel = "Copy";
+        copyBtn.dataset.copyValue = plaintext;
+        copyBtn.classList.remove("hidden");
+
+        const prefersReducedMotion =
+          window.matchMedia &&
+          window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+        if (prefersReducedMotion || plaintext.length === 0) {
+          resultText.textContent = plaintext;
+          return;
+        }
+
+        // Segment into user-perceived characters (grapheme clusters / code points)
+        // so Vietnamese diacritics and multi-codepoint emoji never split mid-character.
+        if (typeof Intl !== "undefined" && Intl.Segmenter) {
+          const segmenter = new Intl.Segmenter("vi", { granularity: "grapheme" });
+          typewriterChars = Array.from(segmenter.segment(plaintext), function (s) {
+            return s.segment;
+          });
+        } else {
+          typewriterChars = Array.from(plaintext);
+        }
+
+        typewriterFullText = plaintext;
+        typewriterIndex = 0;
+
+        // Fast, readable pace; scales slightly for very long entries
+        const delayMs = typewriterChars.length > 600 ? 10 : 18;
+
+        typewriterTimer = setInterval(function () {
+          if (typewriterIndex < typewriterChars.length) {
+            resultText.textContent += typewriterChars[typewriterIndex];
+            typewriterIndex++;
+          } else {
+            stopTypewriter(true);
+          }
+        }, delayMs);
+      }
+
+      function stopTypewriter(revealFull) {
+        if (typewriterTimer !== null) {
+          clearInterval(typewriterTimer);
+          typewriterTimer = null;
+          if (revealFull && typewriterFullText) {
+            resultText.textContent = typewriterFullText;
+          }
+        }
+        typewriterFullText = "";
+        typewriterChars = [];
+        typewriterIndex = 0;
+      }
+
+      // Clicking anywhere on the paper sheet skips the active typewriter effect
+      paperSheet.addEventListener("click", function (e) {
+        if (typewriterTimer !== null) {
+          // Do not interfere if user clicked Reset
+          if (e.target.closest("#resetBtn")) return;
+          stopTypewriter(true);
+        }
+      });
+
+      /* =======================================================================
+         9. CLIPBOARD COPY WITH EXECCOMMAND FALLBACK
+         ======================================================================= */
+      async function copyToClipboard(text) {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+          try {
+            await navigator.clipboard.writeText(text);
+            return true;
+          } catch (e) {
+            // Fall through to execCommand fallback
+          }
+        }
+
+        // Fallback using off-screen textarea and document.execCommand("copy")
+        const tempArea = document.createElement("textarea");
+        tempArea.value = text;
+        tempArea.setAttribute("readonly", "");
+        tempArea.style.position = "fixed";
+        tempArea.style.top = "-9999px";
+        tempArea.style.left = "-9999px";
+        document.body.appendChild(tempArea);
+        tempArea.focus();
+        tempArea.select();
+        tempArea.setSelectionRange(0, tempArea.value.length);
+
+        let succeeded = false;
+        try {
+          succeeded = document.execCommand("copy");
+        } catch (err) {
+          succeeded = false;
+        }
+        document.body.removeChild(tempArea);
+        return succeeded;
+      }
+
+      copyBtn.addEventListener("click", async function (e) {
+        e.stopPropagation();
+        if (typewriterTimer !== null) {
+          stopTypewriter(true);
+        }
+        const textToCopy = copyBtn.dataset.copyValue || resultText.textContent;
+        if (!textToCopy) return;
+
+        const ok = await copyToClipboard(textToCopy);
+        if (ok) {
+          const originalLabel = copyBtn.dataset.defaultLabel || "Copy";
+          copyBtn.textContent = "Copied";
+          if (copyResetTimer) clearTimeout(copyResetTimer);
+          copyResetTimer = setTimeout(function () {
+            copyBtn.textContent = originalLabel;
+            copyResetTimer = null;
+          }, 1800);
+        }
+      });
+
+      /* =======================================================================
+         10. INITIALIZATION
+         ======================================================================= */
+      applyModeUI();
+      adjustTextareaHeight();
+      checkCryptoAvailable();
+    })();
+  </script>
+</body>
+</html>
